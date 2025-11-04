@@ -1,0 +1,41 @@
+{
+  "diabetes": {
+    "nombre": "Paquete Control Diabetes",
+    "incluye": [
+      "Valoración y control con Medicina Interna y Nutrición",
+      "Laboratorios Clínicos: Microalbuminuria, Hemoglobina Glicolisada, Glucosa"
+    ],
+    "valor": "139.400",
+    "valor_particular": "561.000"
+  },
+  "senior": {
+    "nombre": "Paquete Senior (Adulto Mayor)",
+    "incluye": [
+      "Valoración y control con Medicina Interna y Nutrición",
+      "Laboratorios Clínicos"
+    ],
+    "valor": "133.400",
+    "valor_particular": "610.000"
+  },
+  "cesarea": {
+    "nombre": "Paquete Cesárea Segmentaria",
+    "incluye": [
+      "Cesárea segura y avanzada",
+      "Habitación privada",
+      "Consultas especializadas (Anestesiología, Pediatría, Ginecología)",
+      "Exámenes médicos y diagnósticos neonatales"
+    ],
+    "valor": "2.500.000",
+    "valor_particular": "3.889.200"
+  },
+  "pediatria": {
+    "nombre": "Paquete Salud Pediátrica",
+    "incluye": [
+      "Consulta con Pediatría",
+      "Consulta con Psicología",
+      "Valoración Nutricional"
+    ],
+    "valor": "135.000",
+    "valor_particular": "480.000"
+  }
+}
