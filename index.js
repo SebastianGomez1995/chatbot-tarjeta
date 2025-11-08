@@ -33,10 +33,30 @@ app.post("/webhook", async (req, res) => {
       const message = data.entry[0].changes[0].value.messages?.[0];
       if (message) {
         const from = message.from;
-        const text = message.text?.body || "";
 
-        if (text.toLowerCase().includes("acepto")) {
+        let userResponse = "";
+
+        if (message.type === "text") {
+          userResponse = message.text.body.toLowerCase();
+        } else if (message.type === "interactive") {
+          const interactive = message.interactive;
+          if (interactive.type === "button_reply") {
+            userResponse = interactive.button_reply.id.toLowerCase();
+          } else if (interactive.type === "list_reply") {
+            userResponse = interactive.list_reply.id.toLowerCase();
+          }
+        }
+
+        // Lógica principal
+        if (userResponse === "acepto") {
           await sendMainMenu(from);
+        } else if (userResponse === "no_acepto") {
+          await sendMessage({
+            messaging_product: "whatsapp",
+            to: from,
+            type: "text",
+            text: { body: "❌ Has rechazado la autorización. No podemos continuar." },
+          });
         } else {
           await sendDataAuthorization(from);
         }
@@ -44,7 +64,7 @@ app.post("/webhook", async (req, res) => {
     }
     res.sendStatus(200);
   } catch (err) {
-    console.error(err);
+    console.error("❌ Error en webhook:", err);
     res.sendStatus(500);
   }
 });
