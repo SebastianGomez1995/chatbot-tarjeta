@@ -12,7 +12,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
-// Estado por usuario
+// Estado por usuario (para guardar autorización y posición en el menú)
 const userState = {};
 
 // ✅ 1. Verificación del webhook con Meta
@@ -29,9 +29,9 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-// 📩 2. Recepción de mensajes
+// 📩 2. Recepción de mensajes entrantes
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200); // responde rápido al webhook
+  res.sendStatus(200); // confirmación rápida a Meta
 
   try {
     const data = req.body;
@@ -39,12 +39,12 @@ app.post("/webhook", async (req, res) => {
       const message = data.entry[0].changes[0].value.messages[0];
       const from = message.from;
 
-      // Inicializa el estado del usuario si no existe
+      // Inicializar estado si no existe
       if (!userState[from]) userState[from] = { autorizado: false, menu: "inicio" };
 
       let userResponse = "";
 
-      // Detectar si el mensaje es texto o botón interactivo
+      // Detectar tipo de mensaje
       if (message.type === "text") {
         userResponse = message.text.body.toLowerCase().trim();
       } else if (message.type === "interactive") {
@@ -71,25 +71,18 @@ app.post("/webhook", async (req, res) => {
         }
       }
 
-      // --- Paso 2: Menú de texto ---
+      // --- Paso 2: Menú principal ---
       if (userResponse === "menu" || userResponse.includes("hola") || userResponse.includes("buen")) {
         userState[from].menu = "principal";
-        await sendMessage(
-          from,
-          "👋 Hola! Bienvenido a *Tarjeta Pabón Más*.\n\n" +
-            "📋 *Menú principal:*\n\n" +
-            "1️⃣ Qué es la Tarjeta Pabón Más\n" +
-            "2️⃣ Beneficios y Paquetes Especiales\n" +
-            "3️⃣ Medios de Pago / Comprar Tarjeta\n" +
-            "4️⃣ Contacto y Ubicación\n\n" +
-            "👉 Escribe el número de la opción que desees."
-        );
+        await sendMainMenu(from);
         return;
       }
 
+      // --- Paso 3: Procesar selección ---
       if (userState[from].menu === "principal") {
         switch (userResponse) {
           case "1":
+          case "servicios":
             await sendMessage(
               from,
               "💳 *La Tarjeta Pabón Más* es una membresía exclusiva de la *Clínica Pabón*.\n\n" +
@@ -100,6 +93,7 @@ app.post("/webhook", async (req, res) => {
             break;
 
           case "2":
+          case "beneficios":
             userState[from].menu = "beneficios";
             await sendMessage(
               from,
@@ -114,6 +108,7 @@ app.post("/webhook", async (req, res) => {
             break;
 
           case "3":
+          case "comprar":
             await sendMessage(
               from,
               "💳 *¿Quieres adquirir la Tarjeta Pabón Más?*\n\n" +
@@ -126,6 +121,7 @@ app.post("/webhook", async (req, res) => {
             break;
 
           case "4":
+          case "contacto":
             await sendMessage(
               from,
               "📞 *Contacto y Ubicación*\n\n" +
@@ -137,15 +133,7 @@ app.post("/webhook", async (req, res) => {
             break;
 
           default:
-            await sendMessage(
-              from,
-              "⚠️ *Opción no válida.*\nPor favor selecciona una opción del menú:\n" +
-                "1️⃣ Qué es la Tarjeta Pabón Más\n" +
-                "2️⃣ Beneficios y Paquetes\n" +
-                "3️⃣ Medios de Pago\n" +
-                "4️⃣ Contacto\n\n" +
-                "✳️ Escribe *menú* para volver al inicio."
-            );
+            await sendMainMenu(from);
         }
       }
     }
@@ -154,7 +142,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// 🛡️ 3. Autorización de tratamiento de datos
+// 🛡️ 3. Solicitud de autorización de datos personales
 async function sendDataAuthorization(to) {
   const body = {
     messaging_product: "whatsapp",
@@ -180,7 +168,7 @@ async function sendDataAuthorization(to) {
   await sendMessageRaw(body);
 }
 
-// 📋 4. Menú principal (interactivo)
+// 📋 4. Menú principal (interactivo con lista)
 async function sendMainMenu(to) {
   const body = {
     messaging_product: "whatsapp",
