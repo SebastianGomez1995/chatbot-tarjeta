@@ -185,10 +185,9 @@ async function sendMainMenu(to) {
           {
             title: "Opciones disponibles",
             rows: [
-              { id: "1", title: "🧰 Qué es la Tarjeta Pabón Más" },
-              { id: "2", title: "🎁 Beneficios y Paquetes" },
-              { id: "3", title: "💳 Comprar Tarjeta" },
-              { id: "4", title: "📞 Contacto y Ubicación" },
+            { id: "servicios", title: "🧰 Servicios", description: "Ver catálogo o descripción" },
+            { id: "contacto", title: "📞 Contacto", description: "Hablar con un asesor" },
+            { id: "ubicacion", title: "📍 Ubicación", description: "Ver dirección o mapa" },
             ],
           },
         ],
