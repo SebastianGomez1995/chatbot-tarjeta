@@ -2,9 +2,10 @@ import express from "express";
 import axios from "axios";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 
 dotenv.config();
-
 const app = express();
 app.use(bodyParser.json());
 
@@ -12,158 +13,189 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
-// Estado por usuario (para guardar autorización y posición en el menú)
-const userState = {};
+// === Persistencia de usuarios ===
+const usersFile = path.join(process.cwd(), "./data/users.json");
 
-// ✅ 1. Verificación del webhook con Meta
+function loadUsers() {
+  if (!fs.existsSync(usersFile)) {
+    fs.writeFileSync(usersFile, JSON.stringify({}, null, 2));
+  }
+  return JSON.parse(fs.readFileSync(usersFile));
+}
+
+function saveUsers(users) {
+  fs.writeFileSync(usersFile, JSON.stringify(users, null, 2));
+}
+
+function getUser(numero) {
+  const users = loadUsers();
+  if (!users[numero]) {
+    users[numero] = { autorizo: false, servicios: [], suscribete: false };
+    saveUsers(users);
+  }
+  return users[numero];
+}
+
+function updateUser(numero, data) {
+  const users = loadUsers();
+  users[numero] = { ...users[numero], ...data };
+  saveUsers(users);
+}
+
+// === 1. Verificación webhook Meta ===
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
-
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("✅ Webhook verificado correctamente.");
+    console.log("✅ Webhook verificado.");
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
   }
 });
 
-// 📩 2. Recepción de mensajes entrantes
+// === 2. Recepción de mensajes ===
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200); // confirmación rápida a Meta
-
+  res.sendStatus(200);
   try {
     const data = req.body;
+    if (data.entry?.[0]?.changes?.[0]?.value?.messages) {
+      const message = data.entry[0].changes[0].value.messages[0];
+      const from = message.from;
+      const user = getUser(from);
 
-    // Validación robusta para evitar errores si el body no contiene mensajes
-    if (
-      !data.entry ||
-      !data.entry[0].changes ||
-      !data.entry[0].changes[0].value.messages
-    )
-      return;
-
-    const message = data.entry[0].changes[0].value.messages[0];
-    const from = message.from;
-
-    // Inicializar estado si no existe
-    if (!userState[from]) userState[from] = { autorizado: false, menu: "inicio" };
-
-    let userResponse = "";
-
-    // Detectar tipo de mensaje
-    if (message.type === "text") {
-      userResponse = message.text.body.toLowerCase().trim();
-    } else if (message.type === "interactive") {
-      const interactive = message.interactive;
-      if (interactive.type === "button_reply") {
-        userResponse = interactive.button_reply.id.toLowerCase();
-      } else if (interactive.type === "list_reply") {
-        userResponse = interactive.list_reply.id.toLowerCase();
+      let userResponse = "";
+      if (message.type === "text") userResponse = message.text.body.toLowerCase().trim();
+      else if (message.type === "interactive") {
+        const inter = message.interactive;
+        userResponse =
+          inter.type === "button_reply" ? inter.button_reply.id.toLowerCase() : inter.list_reply.id.toLowerCase();
       }
-    }
 
-    console.log(`👤 Usuario: ${from} | Respuesta: ${userResponse}`);
+      // === Autorización ===
+      if (!user.autorizo) {
+        if (userResponse === "acepto") {
+            updateUser(from, { autorizo: true, autorizo_fecha: new Date().toISOString() });
+            await sendMessage(from, "✅ Gracias por autorizar el tratamiento de datos.");
+            await sendMainMenu(from);
+            return;
+      }
+      else if (userResponse === "no_acepto") {
+          await sendMessage(from, "❌ No podemos continuar sin autorización.");
+          return;
+        } else {
+          await sendDataAuthorization(from);
+          return;
+        }
+      }
 
-    // --- Paso 1: Autorización de datos ---
-    if (!userState[from].autorizado) {
-      if (userResponse === "acepto") {
-        userState[from].autorizado = true;
-
-        await sendMessage(
-          from,
-          "💳 *La Tarjeta Pabón Más* es una membresía exclusiva de la *Clínica Pabón*.\n\n" +
-            "🔹 Ofrece descuentos de hasta *50%* en servicios médicos, laboratorios y bienestar.\n" +
-            "🔹 Pensada para cuidar tu salud y la de tu familia a un precio accesible.\n\n" +
-            "🔹 Facilita el acceso a servicios de salud privados de alta calidad a través de tarifas preferenciales.\n" +
-            "🔹 Atención prioritaria y beneficios adicionales."
-        );
-
+      // === Menú principal ===
+      if (userResponse === "menu" || userResponse.includes("hola")) {
         await sendMainMenu(from);
         return;
-      } else if (userResponse === "no_acepto") {
-        await sendMessage(from, "❌ Has rechazado la autorización. No podemos continuar.");
-        return;
-      } else {
-        await sendDataAuthorization(from);
-        return;
       }
-    }
 
-    // --- Paso 2: Menú principal ---
-    if (
-      userResponse === "menu" ||
-      userResponse.includes("hola") ||
-      userResponse.includes("buen")
-    ) {
-      userState[from].menu = "principal";
-
-      await sendMessage(
-        from,
-        "💳 *La Tarjeta Pabón Más* es una membresía exclusiva de la *Clínica Pabón*.\n\n" +
-          "🔹 Ofrece descuentos de hasta *50%* en servicios médicos, laboratorios y bienestar.\n" +
-          "🔹 Pensada para cuidar tu salud y la de tu familia a un precio accesible.\n\n" +
-          "🔹 Facilita el acceso a servicios de salud privados de alta calidad a través de tarifas preferenciales.\n" +
-          "🔹 Atención prioritaria y beneficios adicionales."
-      );
-
-      await sendMainMenu(from);
-      return;
-    }
-
-    // --- Paso 3: Procesar selección ---
-    console.log(`📋 Menú actual: ${userState[from].menu}`);
-
-    if (userState[from].menu === "principal") {
       switch (userResponse) {
         case "portafolio":
-          await sendMessage(
-            from,
-            "Conoce todo nuestro portafolio 👇\nhttps://heyzine.com/flip-book/f374307816.html"
-          );
-          await sendBackButton(from);
+          await sendMessage(from, "🧰 Conoce nuestro portafolio:\nhttps://heyzine.com/flip-book/f374307816.html#page/1");
+          updateUser(from, { servicios: [...new Set([...user.servicios, "portafolio"])] });
           break;
 
-        case "suscribete":
-          await sendMessage(
-            from,
-            "🪪 Con un único pago anual de *100.000* incluye:\n- 1 titular y 3 beneficiarios."
-          );
-          await sendBackButton(from);
-          break;
+      case "suscribete":
+      if (!user.suscribete) {
+        // 🔔 Mostrar botones para confirmar suscripción
+        const body = {
+          messaging_product: "whatsapp",
+          to: from,
+          type: "interactive",
+          interactive: {
+            type: "button",
+            body: {
+              text:
+                "🔔 *Suscripción a notificaciones*\n\n¿Deseas recibir novedades, recordatorios y avisos importantes por WhatsApp?",
+            },
+            action: {
+              buttons: [
+                { type: "reply", reply: { id: "confirmar_suscripcion", title: "✅ Sí, suscribirme" } },
+                { type: "reply", reply: { id: "rechazar_suscripcion", title: "❌ No, gracias" } },
+              ],
+            },
+          },
+        };
+        await sendMessageRaw(body);
+      } else {
+        // Ya está suscrito → ofrecer cancelar
+        const body = {
+          messaging_product: "whatsapp",
+          to: from,
+          type: "interactive",
+          interactive: {
+            type: "button",
+            body: {
+              text:
+                "🔔 Ya tienes una suscripción activa para recibir notificaciones.\n\n¿Quieres cancelar tu suscripción?",
+            },
+            action: {
+              buttons: [
+                { type: "reply", reply: { id: "cancelar_suscripcion", title: "🛑 Cancelar" } },
+                { type: "reply", reply: { id: "mantener_suscripcion", title: "👍 Mantenerme" } },
+              ],
+            },
+          },
+        };
+        await sendMessageRaw(body);
+      }
+      break;
+
+    case "confirmar_suscripcion":
+      updateUser(from, {
+        suscribete: true,
+        suscribete_fecha: new Date().toISOString(),
+        opt_out: false,
+      });
+      await sendMessage(
+        from,
+        "🎉 Te has suscrito con éxito a nuestras notificaciones. Puedes darte de baja cuando quieras escribiendo *STOP*."
+      );
+      break;
+
+    case "rechazar_suscripcion":
+      updateUser(from, { suscribete: false });
+      await sendMessage(from, "❌ No recibirás notificaciones. Si cambias de opinión, ingresa a la opcion de menu-> suscribirte, para estar al tanto de todas nuestras ofertas !.");
+      break;
+
+    case "cancelar_suscripcion":
+      updateUser(from, { suscribete: false, opt_out: true });
+      await sendMessage(from, "🛑 Te extrañaremos! no recibiras mas notificaciones de las ofertas que tenemos para ti.");
+      break;
+
+    case "mantener_suscripcion":
+      updateUser(from, {
+        suscribete: true,
+        opt_out: false,
+      });
+      await sendMessage(from, "👍 Perfecto, mantendremos activa tu suscripción a notificaciones.");
+      break;
+
+
 
         case "medios":
-          await sendMessage(from, "💰 Medios de pago disponibles: Nequi, Bancolombia y efectivo.");
-          await sendBackButton(from);
+          await sendMessage(from, "💵 Medios de pago: Nequi, Daviplata o efectivo en nuestras sedes.");
+          updateUser(from, { servicios: [...new Set([...user.servicios, "medios"])] });
           break;
 
         case "contactos":
           await sendMessage(
             from,
-            "📞 *Contacto y Ubicación*\n\n" +
-              "Teléfono: *320 828 3812*\n" +
-              "🏥 Clínica Pabón: Cra. 33 No. 12a-44, Pasto\n" +
-              "🏢 Sede Especialidades: Cra. 36 No. 13-26, Av. Panamericana\n\n" +
-              "✳️ Escribe *menú* para volver al inicio."
+            "📍 *Clínica Pabón*\nTel: 320 828 3812\nCra. 33 No. 12a-44, Pasto\n✳️ Escribe *menú* para volver."
           );
-          await sendBackButton(from);
-          break;
-
-        case "citas":
-          await sendMessage(
-            from,
-            "📅 Para agendar una cita, comunícate al 📞 *320 828 3812* o visita nuestras sedes."
-          );
-          await sendBackButton(from);
+          updateUser(from, { servicios: [...new Set([...user.servicios, "contactos"])] });
           break;
 
         case "asesor":
-          await sendMessage(
-            from,
-            "👩‍💼 Puedes contactar a un asesor directamente al 📞 *320 828 3812*."
-          );
-          await sendBackButton(from);
+          await sendMessage(from, "📞 Contacta con un asesor: 320 828 3812");
+          updateUser(from, { servicios: [...new Set([...user.servicios, "asesor"])] });
           break;
 
         default:
@@ -171,11 +203,11 @@ app.post("/webhook", async (req, res) => {
       }
     }
   } catch (err) {
-    console.error("❌ Error al procesar mensaje:", err);
+    console.error("❌ Error procesando mensaje:", err.message);
   }
 });
 
-// 🛡️ 3. Solicitud de autorización de datos personales
+// === 3. Mensajes interactivos ===
 async function sendDataAuthorization(to) {
   const body = {
     messaging_product: "whatsapp",
@@ -185,10 +217,8 @@ async function sendDataAuthorization(to) {
       type: "button",
       body: {
         text:
-          "🛡️ *Autorización de tratamiento de datos personales*\n\n" +
-          "Antes de continuar, confirma que autorizas a *Clínica Pabón* " +
-          "a tratar tus datos conforme a la Ley 1581 de 2012.\n\n" +
-          "¿Aceptas continuar?",
+          "🛡️ *Autorización de tratamiento de datos personales*\n\nAntes de continuar, confirma que autorizas a *Clínica Pabón* " +
+          "a tratar tus datos conforme a la Ley 1581 de 2012.\n\n¿Aceptas continuar?",
       },
       action: {
         buttons: [
@@ -201,26 +231,6 @@ async function sendDataAuthorization(to) {
   await sendMessageRaw(body);
 }
 
-// 🔙 4. Botón para volver al menú principal
-async function sendBackButton(to) {
-  const body = {
-    messaging_product: "whatsapp",
-    to,
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: {
-        text: "¿Deseas volver al menú principal?",
-      },
-      action: {
-        buttons: [{ type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } }],
-      },
-    },
-  };
-  await sendMessageRaw(body);
-}
-
-// 📋 5. Menú principal (interactivo con lista)
 async function sendMainMenu(to) {
   const body = {
     messaging_product: "whatsapp",
@@ -229,7 +239,7 @@ async function sendMainMenu(to) {
     interactive: {
       type: "list",
       header: { type: "text", text: "📋 Menú Principal" },
-      body: { text: "Selecciona una opción para continuar:" },
+      body: { text: "Selecciona una opción:" },
       footer: { text: "Atención automatizada Clínica Pabón" },
       action: {
         button: "Ver opciones",
@@ -238,11 +248,10 @@ async function sendMainMenu(to) {
             title: "Opciones disponibles",
             rows: [
               { id: "portafolio", title: "🧰 Portafolio", description: "Explora nuestros servicios" },
-              { id: "suscribete", title: "🔔 ¡Suscríbete!", description: "Beneficios de la Tarjeta Más" },
-              { id: "medios", title: "💳 Medios de pago", description: "Formas de pago disponibles" },
-              { id: "contactos", title: "📍 Contacto", description: "Ubicación y atención" },
-              { id: "citas", title: "📅 Agenda tu cita", description: "Programa tu atención" },
-              { id: "asesor", title: "📞 Comunícate", description: "Habla con un asesor" },
+              { id: "suscribete", title: "🔔 ¡Suscríbete!", description: "Beneficios exclusivos" },
+              { id: "medios", title: "💵 Medios de pago", description: "Opciones disponibles" },
+              { id: "contactos", title: "📍 Contacto", description: "Ubicación y teléfono" },
+              { id: "asesor", title: "📞 Asesor", description: "Habla con un asesor" },
             ],
           },
         ],
@@ -252,29 +261,95 @@ async function sendMainMenu(to) {
   await sendMessageRaw(body);
 }
 
-// 🧠 6. Enviar mensajes de texto simples
+// === 4. Envío genérico a API WhatsApp ===
 async function sendMessage(to, text) {
-  await sendMessageRaw({
-    messaging_product: "whatsapp",
-    to,
-    type: "text",
-    text: { body: text },
-  });
+  await sendMessageRaw({ messaging_product: "whatsapp", to, type: "text", text: { body: text } });
 }
 
-// 📡 7. Envío genérico a la API de WhatsApp
 async function sendMessageRaw(body) {
   try {
-    await axios.post(
-      `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`,
-      body,
-      { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
-    );
+    await axios.post(`https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`, body, {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    });
   } catch (error) {
-    console.error("❌ Error enviando mensaje:", error.response?.data || error);
+    console.error("Error enviando mensaje:", error.response?.data || error);
   }
 }
 
-// 🚀 8. Iniciar servidor
+// === 5. Servidor activo ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor activo en puerto ${PORT}`));
+
+// === API para dashboard ===
+app.get("/api/users", (req, res) => {
+  const users = loadUsers();
+  res.json(users);
+});
+
+app.get("/api/users/:numero", (req, res) => {
+  const users = loadUsers();
+  const user = users[req.params.numero];
+  if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+  res.json(user);
+});
+
+app.put("/api/users/:numero", (req, res) => {
+  const users = loadUsers();
+  if (!users[req.params.numero]) return res.status(404).json({ error: "Usuario no encontrado" });
+  users[req.params.numero] = { ...users[req.params.numero], ...req.body };
+  saveUsers(users);
+  res.json({ ok: true, user: users[req.params.numero] });
+});
+
+// === 6. Envío de mensajes masivos ===
+app.post("/send-broadcast", async (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: "Falta el campo 'message'" });
+
+  const users = loadUsers();
+  const recipients = Object.keys(users).filter(num => {
+  const u = users[num];
+  return u.autorizo && u.suscribete && !u.opt_out;
+  });
+
+
+
+  if (recipients.length === 0) {
+    return res.status(200).json({ message: "No hay usuarios suscritos para enviar el mensaje." });
+  }
+
+  console.log(`🚀 Enviando mensaje masivo a ${recipients.length} usuarios...`);
+
+  let enviados = 0;
+  for (const to of recipients) {
+    try {
+      await sendMessage(to, message);
+      enviados++;
+      console.log(`✅ Mensaje enviado a ${to}`);
+      // Espera 2 segundos entre mensajes para no saturar el API
+      await new Promise(r => setTimeout(r, 2000));
+    } catch (error) {
+      console.error(`❌ Error enviando a ${to}:`, error.response?.data || error.message);
+    }
+  }
+
+  res.json({ success: true, enviados, total: recipients.length });
+});
+
+app.post("/api/subscribe", (req, res) => {
+  const { numero, opt_in } = req.body;
+  if (!numero) return res.status(400).json({ error: "Número requerido" });
+
+  const users = loadUsers();
+  if (!users[numero]) {
+    users[numero] = { autorizo: false, servicios: [], suscribete: false };
+  }
+
+  users[numero].suscribete = !!opt_in;
+  users[numero].suscribete_fecha = new Date().toISOString();
+  saveUsers(users);
+
+  res.json({ ok: true, user: users[numero] });
+});
+
+
