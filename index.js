@@ -4,7 +4,7 @@ import bodyParser from "body-parser";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
-import { title } from "process";
+
 
 dotenv.config();
 const app = express();
@@ -37,19 +37,22 @@ function saveUsers(users) {
 function getUser(numero) {
   const users = loadUsers();
   if (!users[numero]) {
-    users[numero] = { autorizo: false, servicios: [],paquetes:[],suscribete: false, opt_out:false };
+    users[numero] = { authorize: false, services: {},packages:{}, quotes:{},opt_in: false, opt_out:false };
     saveUsers(users);
   }
   return users[numero];
 }
-
 function updateUser(numero, data) {
   const users = loadUsers();
+
+  if (!users[numero]) {
+    users[numero] = {};
+  }
+
   users[numero] = { ...users[numero], ...data };
+
   saveUsers(users);
 }
-
-
 
 // === 1. Verificación webhook Meta ===
 app.get("/webhook", (req, res) => {
@@ -97,10 +100,20 @@ app.post("/webhook", async (req, res) => {
                                "💳 Una Tarjeta Pensada para ti y tu familia, esta membresía te brinda acceso fácil y rápido a servicios de salud privados de alta calidad, con tarifas preferenciales, atención prioritaria y beneficios exclusivos que mejoran tu bienestar." );
       }
       // === Autorización ===
-      if (!user.autorizo) {
+      if (!user.authorize) {
         if (userResponse === "acepto") {
-          updateUser(from, { autorizo: true, autorizo_fecha: new Date().toISOString() });
-          await sendMessage(from, "✅ Gracias por autorizar el tratamiento de datos.");
+          updateUser(from, {
+            authorize: true,
+            authorize_date: new Date().toISOString(),
+            opt_in: true,
+            opt_in_date: new Date().toISOString(),
+            opt_out: false
+          });
+          await sendMessage(
+            from,
+            "✅ Gracias por autorizar el tratamiento de datos. \n\n" +
+            "🎉 Te has suscrito con éxito a nuestras notificaciones. Puedes darte de baja cuando quieras escribiendo *STOP* o *CANCELAR*."
+          );
           await sendMainMenu(from);
           return;
         } else if (userResponse === "no_acepto") {
@@ -125,22 +138,22 @@ app.post("/webhook", async (req, res) => {
         return;
       }
       
-      
-        
-      
+      const paquetes = JSON.parse(fs.readFileSync(paquetesFile));
 
+      if (paquetes[userResponse]) {
+        userState[from].menu = "portafolio"
+      };
+      
       switch (userResponse) {
         case "portafolio":
           await sendMessage(from, "💬 Descubre todo lo que tenemos para ti\n\n" + 
                                   "Conoce nuestro portafolio de servicios y encuentra soluciones diseñadas para tus necesidades.");
-            //"🧰 Conoce nuestro portafolio:\nhttps://heyzine.com/flip-book/f374307816.html#page/1");
-          updateUser(from, { servicios: [...new Set([...user.servicios, "portafolio"])] });
+          updateUser(from, { services: {...getUser(from).services, portafolio:true}});
           await sendPaquetesMenu(from);
           userState[from].menu = "portafolio"
-          break;
+        break;
         case "revista":
-            updateUser(from, { paquetes: [...new Set([...user.paquetes, "revista"])] });
-            
+            updateUser(from, { packages: {...getUser(from).packages, revista:true}});
             await sendMessage(from,"📰 ¡Te invitamos a conocer nuestra revista digital!\n\n" +
                                    "Explora nuestro catálogo completo con todos los productos y servicios en un solo lugar.\n"+
                                    "✨ Inspírate, elige y descubre lo que tenemos para ti.\n\n" +
@@ -153,65 +166,77 @@ app.post("/webhook", async (req, res) => {
         case "suscribete":
           await sendMessage(from, "💥 ¡Aprovecha nuestra membresía anual!\n\n" +
                                   "Por solo $100.000 al año, obtienes beneficios exclusivos para 1 titular y 3 beneficiarios.\n" +
-                                  "🔔 Activa las notificaciones y sé el primero en recibir novedades, promociones y contenido especial.\n\n" +
-
-                                  "👉 ¡No te quedes por fuera!")
+                                  "👉 ¡No te quedes por fuera!\n\n"+
+                                  "💳 Para adquirir la Tarjeta Pabón Más\n\n" +
+                                  "Puedes hacerlo visitando nuestras sedes:\n" +
+                                  "🏥 Clínica Pabón: Cra. 33 No. 12a-44, Pasto\n" +
+                                  "🏢 Sede Especialidades: Cra. 36 No. 13-26, Av. Panamericana\n\n")
+          if(!user.opt_in ){
+              button = [
+                    { type: "reply", reply: { id: "confirmar_suscripcion", title: "✅ Sí, suscribirme" } },
+                  ]
+              await sendBackButton(from, button,"🔔 Activa las notificaciones y sé el primero en recibir novedades, promociones y contenido especial.\n\n" ,false);
+            
+          }
           button = [
                     { type: "reply", reply: { id: "adquirir", title: "💳 Adquirir" } },
+                    { type: "reply", reply: { id: "medios", title: "💵 Medios de pago" } },
+                    { type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },
     
                   ],
           await sendBackButton(from, button,"💳 Adquiere tu Tarjeta Pabón Más", false);
-          if (!user.suscribete) {
-            button = [
-                    { type: "reply", reply: { id: "confirmar_suscripcion", title: "✅ Sí, suscribirme" } },
-                    { type: "reply", reply: { id: "rechazar_suscripcion", title: "❌ No, gracias" } },
-                  ]
-            await sendBackButton(from, button,"🔔 *Suscripción a notificaciones*\n\n¿Deseas recibir novedades, recordatorios y avisos importantes por WhatsApp?" );
-            
-          } else {
-            button = [
-                    { type: "reply", reply: { id: "cancelar_suscripcion", title: "🛑 Cancelar" } },
-                    { type: "reply", reply: { id: "mantener_suscripcion", title: "👍 Mantenerme" } },
-                  ],
-            await sendBackButton(from, button, "🔔 Ya tienes una suscripción activa para recibir notificaciones.\n\n¿Quieres cancelar tu suscripción?");
-          }
-          break;
-
+        break;
         case "confirmar_suscripcion":
           updateUser(from, {
-            suscribete: true,
-            suscribete_fecha: new Date().toISOString(),
+            opt_in: true,
+            opt_in_date: new Date().toISOString(),
             opt_out: false,
           });
           await sendMessage(
             from,
-            "🎉 Te has suscrito con éxito a nuestras notificaciones. Puedes darte de baja cuando quieras escribiendo *STOP*."
+            "🎉 Te has suscrito con éxito a nuestras notificaciones. Puedes darte de baja cuando quieras escribiendo *STOP* o *CANCELAR*."
           );
           button = [{ type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },]
           await sendBackButton(from, button,"Selecciona para regresar: ");
           break;
 
-        case "rechazar_suscripcion":
-          updateUser(from, { suscribete: false });
-          await sendMessage(from, "❌ No recibirás notificaciones. Si cambias de opinión, ve al menú → *Suscribirte*.");
-          await sendMainMenu(from)
-          break;
+        case "stop":
+        case "cancelar":
+          if (!user.opt_in) {
+            button = [
+                    { type: "reply", reply: { id: "confirmar_suscripcion", title: "✅ Sí, suscribirme" } },
+                    { type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },
+                  ]
+            await sendBackButton(
+                  from,
+                  button,
+                  "🔔 *Suscripción a notificaciones*\n\n" +
+                  "Actualmente no tienes una suscripción activa. Actívala para no perderte ninguna de nuestras ofertas, recordatorios y novedades importantes."
+                  ,false);
+            
+          } else {
+            button = [
+                    { type: "reply", reply: { id: "cancelar_suscripcion", title: "🛑 Cancelar" } },
+                    { type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },
+                  ],
+            await sendBackButton(
+                  from,
+                  button,
+                  "⚠️ *Cancelar suscripción*\n\n" +
+                  "¿Estás seguro de que deseas cancelarla? Perderás avisos, recordatorios y ofertas exclusivas.",false
+                );
 
+          }
+        break;
         case "cancelar_suscripcion":
-          updateUser(from, { suscribete: false, opt_out: true });
-          
-          await sendMessage(from, "🛑 Has cancelado tu suscripción. Ya no recibirás notificaciones.");
+          updateUser(from, { opt_in: false, opt_out: true, opt_out_date: new Date().toISOString(), });
+          await sendMessage(
+                from,
+                "✨ Tu suscripción ha sido cancelada.\n\nYa no recibirás notificaciones, pero podrás activarlas nuevamente cuando lo desees 😊 "
+              );
           await sendMainMenu(from)
           break;
-
-        case "mantener_suscripcion":
-          updateUser(from, { suscribete: true, opt_out: false });
-          await sendMessage(from, "👍 Mantendremos activa tu suscripción.");
-          await sendMainMenu(from)
-          break;
-
-       case "medios":
-          
+        case "medios":
           await sendImage(
             from,
             `${URLBOT}/media/pagos.jpg`,
@@ -219,18 +244,17 @@ app.post("/webhook", async (req, res) => {
           );
           await new Promise(res => setTimeout(res, 1000));
 
-          await sendMessage(from, "💳 ¿Quieres adquirir la Tarjeta Pabón Más?\n\n" +
-                                  "Puedes hacerlo visitando nuestras sedes:\n" +
-                                  "🏥 Clínica Pabón: Cra. 33 No. 12a-44, Pasto\n" +
-                                  "🏢 Sede Especialidades: Cra. 36 No. 13-26, Av. Panamericana\n\n");
+          
                               
-          updateUser(from, { servicios: [...new Set([...user.servicios, "medios"])] });
+           updateUser(from, { services: {...getUser(from).services, pagos:true}});
 
           button = [
-                    { type: "reply", reply: { id: "asesor", title: "📞 Asesor" } },
+                    { type: "reply", reply: { id: "adquirir", title: "📞 Asesor" } },
                     { type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },
                   ],
-          await sendBackButton(from, button,"o contactando a uno de nuestros asesores:", false);
+          await sendBackButton(from, 
+                button,
+                "o contactando a uno de nuestros asesores:", false);
         break;
 
         case "contactos":
@@ -248,7 +272,7 @@ app.post("/webhook", async (req, res) => {
                     { type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },
                   ]
           await sendBackButton(from, button,"O si prefieres, habla con uno de nuestros asesores por WhatsApp y recibe atención personalizada 👇", false);
-          updateUser(from, { servicios: [...new Set([...user.servicios, "contactos"])] });
+          updateUser(from, { services: {...getUser(from).services, contactos:true}});
           break;
           case "asesor":
             messagecitas = "Hola 👋 necesito hablar con un asesor";
@@ -262,26 +286,20 @@ app.post("/webhook", async (req, res) => {
           button = [{ type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },]
           await sendBackButton(from, button,"Selecciona para regresar: ", false);
 
-          updateUser(from, {
-            servicios: [...new Set([...user.servicios, "asesor"])]
-          });
+          updateUser(from, { services: {...getUser(from).services, asesor:true}});
         break;
-        case "citas":
-          messagecitas = "Hola 👋 necesito agendar una cita";
-          encodedMessage = encodeURIComponent(messagecitas);
-          url = `https://wa.me/573208283812?text=${encodedMessage}`;
-          await sendMessage(from, 
-            "📞 *Agenda tu cita via WhatsApp*\n\n" +
-            "Haz clic en el siguiente enlace  👇:\n\n" + url
-            
-          );
-          button = [
-                    { type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },
-                  ]
-          await sendBackButton(from, button,"Selecciona para regresar", false);
-          updateUser(from, { servicios: [...new Set([...user.servicios, "citas"])] });
+        case "externa":
+        case "diagnostica":
+        case "laboratorio":
+        case "otros":
+       
+        await handleCitasDetail(from,userResponse)
+        break;
+         case "citas":
           
-          
+          updateUser(from, { services: {...getUser(from).services, citas:true}});
+          userState[from].menu = "citas"
+          await sendCitaMenu(from)
         break;
         case "adquirir":
           messagecitas = "Hola 👋 Quiero Comprar la Tarjeta Pabón Más";
@@ -296,7 +314,7 @@ app.post("/webhook", async (req, res) => {
                     { type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },
                   ]
           await sendBackButton(from, button,"Selecciona para regresar", false);
-          updateUser(from, { servicios: [...new Set([...user.servicios, "adquirir"])] });
+          updateUser(from, { services: {...getUser(from).services, adquirir:true}});
           
           
         break;
@@ -306,11 +324,21 @@ app.post("/webhook", async (req, res) => {
 
         default:
           if(userState[from].menu === "principal"){
-            await sendMessage(from," 🤔 ¡Lo siento! No entendí lo que escribiste, puedes seleccionar la opción que necesites tocando el botón 'Ver opciones'")  
+            await sendMessage(from,"🤔 ¡Lo siento! No entendí lo que escribiste, puedes seleccionar la opción que necesites tocando el botón 'Ver opciones'")  
             await sendMainMenu(from)
           }
-          else{if (await handlePaqueteDetail(from, userResponse)) break;}
+          else{
+            if(userState[from].menu === "citas" && !await handleCitasDetail(from,userResponse)){
+              await sendMessage(from,"🤔 ¡Lo siento! No entendí lo que escribiste, puedes seleccionar la opción que necesites tocando el botón 'Ver opciones'")  
+              await sendCitaMenu(from)
+              break;}
+            else if (userState[from].menu === "portafolio" && !await handlePaqueteDetail(from, userResponse)){
+              await sendMessage(from,"🤔 ¡Lo siento! No entendí lo que escribiste, puedes seleccionar la opción que necesites tocando el botón 'Ver paquetes'")  
+              await sendPaquetesMenu(from)
+              break;}
+            }
           
+  
       }
     }
   } catch (err) {
@@ -352,9 +380,8 @@ async function handlePaqueteDetail(to, id) {
   const paquetes = JSON.parse(fs.readFileSync(paquetesFile));
 
   if (!paquetes[id]) return false;
-
+  console.log("id: ",id)
   const p = paquetes[id];
-  const user = getUser(to);
   const messagecitas = `Hola 👋 quiero adquirir el paquete ${p.nombre}`;
   const encodedMessage = encodeURIComponent(messagecitas);
   const url = `https://wa.me/573208283812?text=${encodedMessage}`;
@@ -364,14 +391,53 @@ async function handlePaqueteDetail(to, id) {
     `💰 Valor Con Tarjeta Pabón Más: *$${p.valor}*\n💳 Particular: *$${p.valor_particular}*\n\n` +
     `Adquiere este paquete desde el link 👇\n`+
     `${url}`;
-
-  updateUser(to, { paquetes: [...new Set([...user.paquetes, p.nombre])] });
+  
+  updateUser(to, { packages: {...getUser(to).packages, [p.nombre]:true}});
   await sendMessage(to, texto);
   const button = [ 
                   { type: "reply", reply: { id: "portafolio", title: "🏠 Menú Anterior" } },
                   { type: "reply", reply: { id: "menu", title: "🏠 Menú Principal" } }]
   await sendBackButton(to, button, "Seleccione una opcion:", false);
   return true;
+}
+
+async function handleCitasDetail(to, id) {
+  let messagecitas
+  switch (id) {
+    case "externa":
+      messagecitas = "Hola 👋 necesito agendar una cita 🏥 consulta externa";
+      break;
+    case "diagnostica":
+      messagecitas = "Hola 👋 necesito agendar una cita para 🧪 Diagnóstico";
+      break;
+    case "laboratorio":
+      messagecitas = "Hola 👋 necesito agendar una cita para 🔬 laboratorio clínico";
+      break;
+    case "otros":
+      messagecitas = "Hola 👋 necesito hablar con un asesor";
+      break;
+    default:
+      return false
+  }
+  updateUser(to, {
+  quotes: {
+    ...getUser(to).quotes,
+    [id]: true
+  }
+});
+  
+  const encodedMessage = encodeURIComponent(messagecitas);
+  const url = `https://wa.me/573208283812?text=${encodedMessage}`;
+  await sendMessage(to, 
+    "📞 *Agenda tu cita via WhatsApp*\n\n" +
+    "Haz clic en el siguiente enlace  👇:\n\n" + url
+    
+  );
+  const button = [
+            { type: "reply", reply: { id: "menu", title: "🏠 Volver al menú" } },
+          ]
+  await sendBackButton(to, button,"Selecciona para regresar", false);
+  return true
 }
 
 // === 3. Mensajes interactivos (autorización, botones, etc.) ===
@@ -384,8 +450,11 @@ async function sendDataAuthorization(to) {
       type: "button",
       body: {
         text:
-          "🛡️ *Autorización de tratamiento de datos personales*\n\nAntes de continuar, confirma que autorizas a *Clínica Pabón* " +
-          "a tratar tus datos conforme a la Ley 1581 de 2012.\n\n¿Aceptas continuar?",
+          "🛡️ *Autorización y Suscripción*\n\n" +
+          "Antes de continuar, necesitamos tu confirmación:\n\n" +
+          "1️⃣ Autorizas a *Tarjeta Pabón Más* a tratar tus datos personales según la Ley 1581 de 2012.\n" +
+          "2️⃣ Aceptas suscribirte para recibir información, beneficios y notificaciones importantes.\n\n" +
+          "¿Estás de acuerdo para continuar?",
       },
       action: {
         buttons: [
@@ -434,7 +503,6 @@ async function sendMainMenu(to) {
             rows: [
               { id: "portafolio", title: "🧰 Portafolio", description: "Explora nuestros servicios" },
               { id: "suscribete", title: "🔔 ¡Suscríbete!", description: "Beneficios exclusivos" },
-              { id: "medios", title: "💵 Medios de pago", description: "Opciones disponibles" },
               { id: "contactos", title: "📍 Contacto", description: "Ubicación y teléfono" },
               { id: "citas", title: "📅 Citas", description: "Agenta tu Citas" },
               { id: "asesor", title: "📞 Asesor", description: "Habla con un asesor" },
@@ -446,6 +514,41 @@ async function sendMainMenu(to) {
   };
   await sendMessageRaw(body);
 }
+
+async function sendCitaMenu(to) {
+  const body = {
+    messaging_product: "whatsapp",
+    to,
+    type: "interactive",
+    interactive: {
+      type: "list",
+      header: { type: "text", text: "📅 Agenda tu Cita" },
+    body: {
+      text:
+        "Estamos aquí para ayudarte 😊\n" +
+        "Selecciona una opción para gestionar tus citas:"
+    },
+    footer: { text: "Atención automatizada de la Clínica Pabón" },
+    action: {
+        button: "Ver opciones",
+        sections: [
+                  {
+                    title: "Opciones disponibles",
+                    rows: [
+                      { id: "externa", title: "🏥 Consulta Externa", description: "Agenda atención médica general y especializada" },
+                      { id: "diagnostica", title: "🧪 Diagnóstico", description: "Rayos X, ecografías y estudios diagnósticos" },
+                      { id: "laboratorio", title: "🔬 Laboratorio Clínico", description: "Exámenes de laboratorio y resultados" },
+                      { id: "otros", title: "📅 Otras Citas", description: "Consulta otros servicios" },
+                      { id: "menu", title: "🏠 Volver al menú", description: ""}
+                    ],
+                  },
+                  ]
+      },
+    },
+  };
+  await sendMessageRaw(body);
+}
+
 
 // === 4. Envío genérico ===
 async function sendMessage(to, text) {
@@ -483,41 +586,69 @@ app.listen(PORT, () => console.log(`🚀 Servidor activo en puerto ${PORT}`));
 // === 6. Envío de mensajes masivos ===
 app.post("/api/send-broadcast", async (req, res) => {
   try {
-    const { message, image, recipients } = req.body;
+    const { message, image, recipients, allRecipients } = req.body;
+
     if (!message) {
       return res.status(400).json({ error: "Falta el campo 'message'" });
     }
 
     const users = loadUsers();
-
-    // Filtra los destinatarios válidos
     const allNumbers = Object.keys(users);
-    let targetNumbers = [];
 
-    if (Array.isArray(recipients) && recipients.length > 0) {
-      // Filtrar solo los que están en users.json y suscritos
+    let targetNumbers = [];
+    const reAll = Boolean(allRecipients);
+
+    // Validación: si allRecipients TRUE pero no envían lista
+    if (reAll && !recipients) {
+      return res.status(400).json({ error: "Falta la lista de usuarios 'recipients'" });
+    }
+
+    // === Selección de destinatarios ===
+    if (Array.isArray(recipients) && recipients.length > 0 && !reAll) {
+      // Caso 1: recipients + filtrar opt_in
       targetNumbers = recipients.filter(num => {
         const u = users[num];
-        return u && u.suscribete;
+        return u && u.opt_in;
       });
-    } else {
-      // Si no se envió lista, usar todos los suscritos
-      targetNumbers = allNumbers.filter(num => users[num].suscribete);
+    }
+    else if (reAll && recipients?.length > 0) {
+      // Caso 2: allRecipients = true → usar lista tal cual
+      targetNumbers = recipients;
+    }
+    else {
+      // Caso 3: no hay lista → todos los suscritos
+      targetNumbers = allNumbers.filter(num => users[num].opt_in);
     }
 
     if (targetNumbers.length === 0) {
-      return res.status(400).json({ error: "No hay usuarios suscritos válidos." });
+      return res.status(400).json({ error: "No hay usuarios válidos para enviar." });
     }
 
+    // === Registrar usuarios nuevos si no existen ===
+    for (const num of targetNumbers) {
+      if (!users[num]) {
+        users[num] = {
+          authorize: true,
+          opt_in: true,
+          opt_out: false,
+          lastMessage: Date.now(),
+          
+        };
+        
+      }
+    }
+
+    // Guardar cambios
+    saveUsers(users);
+
+    // === ENVIAR ===
     let enviados = 0;
 
     for (const numero of targetNumbers) {
       try {
         if (image) {
-          // Enviar imagen primero
           await sendImage(numero, image, message);
         } else {
-          // Solo texto
           await sendMessage(numero, message);
         }
         enviados++;
@@ -532,13 +663,12 @@ app.post("/api/send-broadcast", async (req, res) => {
       total: targetNumbers.length,
       detalle: targetNumbers
     });
+
   } catch (err) {
     console.error("Error en broadcast:", err);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 });
-
-
 
 
 app.get("/api/users", (req, res) => {
@@ -557,7 +687,7 @@ app.get("/api/users/suscriptos", (req, res) => {
   try {
     const users = loadUsers();
     const suscriptos = Object.entries(users)
-      .filter(([_, u]) => u.suscribete === true && u.opt_out !== true)
+      .filter(([_, u]) => u.opt_in === true && u.opt_out !== true)
       .reduce((acc, [num, u]) => ({ ...acc, [num]: u }), {});
 
     res.json(suscriptos);
